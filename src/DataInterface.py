@@ -7,7 +7,6 @@ Description: A data processing interface that accepts time intervals, aggregates
 """
 import re
 import datetime
-import threading
 
 class DataInterface:
     """
@@ -21,7 +20,7 @@ class DataInterface:
         data (list): The cleaned trading data records, each a list of [timestamp, price, size].
     """
 
-    def __init__(self, data_cleaner, num_threads=8):
+    def __init__(self, data_cleaner):
         """
         Initialize the interface with the cleaned dataset.
         
@@ -29,8 +28,6 @@ class DataInterface:
         """
         self.data = data_cleaner.get_cleaned_data()
         self.ohlcv_data = []
-        self.num_threads = num_threads
-        self.lock = threading.Lock()
 
     def validate_time_interval(self, interval):
         """
@@ -69,13 +66,13 @@ class DataInterface:
     
         This method validates the provided time interval string and extracts the 
         number of days, hours, minutes, and seconds from it. It then creates and 
-        returns a `datetime.timedelta` object representing the specified duration.
+        returns a datetime.timedelta object representing the specified duration.
 
         The format for the interval can include combinations of days, hours, minutes, 
         and seconds, which will be parsed accordingly. The method uses regular expressions
         to ensure the input is valid and structured correctly.
 
-        :return: A `datetime.timedelta` object representing the parsed time interval.
+        :return: A datetime.timedelta object representing the parsed time interval.
         """
         # Validate the input interval string format using the validate_time_interval method
         match = self.validate_time_interval(interval)
@@ -106,7 +103,7 @@ class DataInterface:
         - Close: The price of the last trade in the interval.
         - Volume: The total size (volume) of all trades within the interval.
 
-        The resulting OHLCV data is stored in `self.data` and returned as a list of lists, 
+        The resulting OHLCV data is stored in self.data and returned as a list of lists, 
         where each list contains [Timestamp, Open, High, Low, Close, Volume] for the respective interval.
 
         :return: A list of OHLCV data, where each entry is a row represented as a list 
@@ -114,79 +111,37 @@ class DataInterface:
         """
         interval_timedelta = self.parse_time_interval(interval)
 
-        # Check if the time period is less than the interval
-        if (end_time - start_time) < interval_timedelta:
-            raise ValueError("The time period is shorter than the specified interval.")
-        
-        # Split data into chunks for processing
-        chunk_size = len(self.data) // self.num_threads
-        threads = []
-        
-        for i in range(self.num_threads):
-            start_index = i * chunk_size
-            end_index = (i + 1) * chunk_size if i != self.num_threads - 1 else len(self.data)
-            thread_data = self.data[start_index:end_index]
-
-            thread = threading.Thread(target=self._process_data_chunk, args=(thread_data, start_time, end_time, interval_timedelta))
-            threads.append(thread)
-            thread.start()
-
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join()
-    
-    def _process_data_chunk(self, data_chunk, start_time, end_time, interval_timedelta):
-        """
-        Process a chunk of tick data to generate OHLCV (Open, High, Low, Close, Volume) bars for a specified time interval.
-    
-        Args:
-            data_chunk (list): A list of rows where each row contains [timestamp, price, size].
-            start_time (datetime): The start time of the period to process.
-            end_time (datetime): The end time of the period to process.
-            interval_timedelta (timedelta): The time interval for OHLCV aggregation.
-    
-        This method processes tick data within the provided time range, grouping data into OHLCV bars for each interval.
-        It locks shared resources (e.g., `self.ohlcv_data`) when appending results to ensure thread safety.
-        """
+        # Prepare to hold OHLCV data
         current_time = start_time
-        
-        # Loop through time intervals until the current time exceeds the end time
+
+        # Iterate through data and group by the specified interval
         while current_time < end_time:
-            # Initialize OHLCV variables for the current interval
             open_price, high_price, low_price, close_price, total_volume = None, float('-inf'), float('inf'), None, 0
+
+            # Calculate the end time for the current interval
             interval_end_time = current_time + interval_timedelta
 
-            # Only process if the interval end time does not exceed the overall end time
-            if interval_end_time > end_time:
-                break  # Exit the loop if the next interval exceeds the end time
-
-            # Iterate through each row (tick) in the data chunk
-            for row in data_chunk:
-                # Parse trade time from the first column
+            # Process trades within the current interval
+            for row in self.data:
                 trade_time = datetime.datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S.%f")
-                
-                # Check if the trade falls within the current time interval
                 if current_time <= trade_time < interval_end_time:
                     price = float(row[1])
                     size = float(row[2])
-                    # Set open price if it's the first trade in this interval
+
                     if open_price is None:
                         open_price = price
-                    
-                    # Update high, low, and close prices for this interval
                     high_price = max(high_price, price)
                     low_price = min(low_price, price)
                     close_price = price
-                    total_volume += size # Accumulate total volume
+                    total_volume += size
 
-            # If any trades were processed in this interval, append OHLCV data
+            # Append the OHLCV record if there were trades in the interval
             if open_price is not None:
-                # Use lock to ensure thread-safe access to shared OHLCV data
-                with self.lock:
-                    self.ohlcv_data.append([current_time, open_price, high_price, low_price, close_price, total_volume])
+                self.ohlcv_data.append([current_time, open_price, high_price, low_price, close_price, total_volume])
 
-            # Move to the next time interval
-            current_time += interval_timedelta
+            # Move to the next interval
+            current_time = interval_end_time
+        return self.ohlcv_data
     
     def write_to_csv(self, output_file):
         """
@@ -206,15 +161,3 @@ class DataInterface:
                 # Write each row in the OHLCV data
                 file.write(f"{row[0]},{row[1]},{row[2]},{row[3]},{row[4]},{row[5]}\n")
         print(f"OHLCV data successfully saved to {output_file}")
-
-    def display_data(self):
-        """
-        Dispay the OHLCV data
-        """
-
-        print("Timestamp, Open, High, Low, Close, Volume\n") # Write header
-        if self.ohlcv_data:
-            for row in self.ohlcv_data:
-                print(row)
-            else:
-                print("No data loaded")

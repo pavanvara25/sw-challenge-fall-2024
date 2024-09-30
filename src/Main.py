@@ -28,7 +28,6 @@ def main():
     data_cleaner = DataCleaner(data_loader)
     data_cleaner.clean_data()  # Perform cleaning
 
-    #Save the cleaned data
     data_cleaner.write_to_csv('cleaned_data.csv')
 
     ohlcv_generator = DataInterface(data_cleaner)
