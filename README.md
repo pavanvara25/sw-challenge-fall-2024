@@ -1,4 +1,4 @@
-# CTG SWE Task: Tick Data Processing Project
+# Tick Data Processing Project
 This project is designed to efficiently process large datasets related to stock trading. It includes three main components: **DataLoader**, **DataCleaner**, and **DataInterface**. These components work together to load, clean, and aggregate tick data into OHLCV bars for specified time intervals.
 
 ## Table of Contents
